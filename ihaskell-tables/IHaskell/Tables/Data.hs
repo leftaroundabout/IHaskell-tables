@@ -100,15 +100,31 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
   type TSDLegend (s,t) = (TSDLegend s, TSDLegend t)
   type SharedPrecomputation (s,t) = (SharedPrecomputation s, SharedPrecomputation t)
   precompute (x,y) = (precompute x, precompute y)
-  showAsTable l (px,py) (x,y) = colEnv (showAsTable (fmap fst l) px x)
-                             <> colEnv (showAsTable (fmap snd l) py y)
+  showAsTable l (px,py) (x,y) = fst colEnv (showAsTable (fmap fst l) px x)
+                             <> snd colEnv (showAsTable (fmap snd l) py y)
    where colEnv = case tableLevel $ Just x of
-          TabListItem -> H.td
-          TabAtomic   -> H.td
-          TabTupCols  -> id
-          TabTupRows  -> id
-          TabListCols -> H.tr
-          TabListRows -> H.td . H.table
+          TabTupCols  -> (id, case tableLevel $ Just y of
+                                         TabListItem -> H.td
+                                         TabAtomic   -> H.td
+                                         TabListCols -> id
+                                         TabTupCols  -> id
+                                         _           -> H.td . H.table )
+          TabTupRows  -> (id, case tableLevel $ Just y of
+                                         TabListRows -> id
+                                         TabTupRows  -> id
+                                         _           -> H.tr )
+          TabListCols -> (H.tr, H.tr . case tableLevel $ Just y of
+                                         TabListCols -> id
+                                         TabTupCols  -> id
+                                         _           -> H.table )
+          TabListRows -> (H.td . H.table, H.td . H.table)
+          _           -> (H.td, case tableLevel $ Just y of
+                                         TabListItem -> H.td
+                                         TabAtomic   -> H.td
+                                         TabListCols -> id
+                                         TabTupCols  -> id
+                                         _           -> H.td . H.table )
+
   tableLevel pq = case tableLevel $ fmap fst pq of
           TabListItem -> TabTupCols
           TabAtomic   -> TabTupCols
