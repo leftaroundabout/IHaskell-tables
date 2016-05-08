@@ -12,6 +12,8 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE RankNTypes           #-}
 
 module IHaskell.Tables.Data (Table, tabular, tableWithLegend, TabShow) where
 
@@ -19,10 +21,14 @@ module IHaskell.Tables.Data (Table, tabular, tableWithLegend, TabShow) where
 import IHaskell.Display
 import IHaskell.Display.Blaze
 
+import Text.Blaze.Html ((!))
 import qualified Text.Blaze.Html4.Strict as H
 import qualified Text.Blaze.Html4.Strict.Attributes as HA
 
+import Stitch
+
 import Data.Monoid
+import Data.String (IsString(..))
 
 -- | A tabular view of Haskell data.
 data Table d = Table { getTableContent :: d
@@ -36,6 +42,15 @@ tableWithLegend :: TabShow d => TSDLegend d -> d -> Table d
 tableWithLegend legend x = Table x $ pure legend
 
 type HTML = H.Html
+
+class HTClassy s where
+  asHTMLClass :: String -> s
+instance HTClassy Selector where
+  asHTMLClass = fromString . ('.':)
+instance HTClassy H.Attribute where
+  asHTMLClass = HA.class_ . fromString
+
+type HTMLClass = String
 
 data TableLevel = TabListItem | TabAtomic
                 | TabTupCols  | TabTupRows
@@ -58,30 +73,48 @@ class (Monoid (SharedPrecomputation s)) => TabShow s where
   showListAsTable l pc i = addLegend l $ foldMap (rowEnv . showAsTable Nothing pc) i
    where rowEnv = case tableLevel . Just $ head i of
           TabListItem -> id
-          TabAtomic   -> H.td
-          TabTupCols  -> H.tr
-          TabTupRows  -> H.td . H.table
-          TabListCols -> H.tr
-          TabListRows -> H.td . H.table
+          TabAtomic   -> td
+          TabTupCols  -> tr
+          TabTupRows  -> td . H.table
+          TabListCols -> tr
+          TabListRows -> td . H.table
          addLegend Nothing t = t
          addLegend (Just l) t = H.thead (rowEnv $ showAsTable Nothing mempty l)
                              <> H.tbody t
+         [td,tr] = fmap (!asHTMLClass (tableCellClass . Just $ head i)) <$> [H.td, H.tr]
+  
   tableLevel :: Functor p => p s -> TableLevel
   tableLevel _ = TabAtomic
+  
+  tableCellClass :: Functor p => p s -> HTMLClass
+  tableCellClass _ = "CustomData"
+  
+  defaultStyling, defaultTdStyle, defaultTrStyle :: Functor p => p s -> CSS
+  defaultStyling d = do
+        fromString ("td."<>tableCellClass d)? defaultTdStyle d
+        fromString ("tr."<>tableCellClass d)? defaultTrStyle d
+  defaultTdStyle _ = mempty
+  defaultTrStyle _ = mempty
 
 instance TabShow () where
   type TSDLegend () = ()
   showAsTable _ _ () = mempty
   showListAsTable _ _ _ = mempty
   tableLevel _ = TabListItem
+  tableCellClass _ = "Unit"
 instance TabShow Int where
   showAsTable _ _ i = H.toHtml i
+  tableCellClass _ = "Int"
+  defaultTdStyle _ = "text-align" .= "right"
 instance TabShow Integer where
   showAsTable _ _ i = H.toHtml i
+  tableCellClass _ = "Integer"
+  defaultTdStyle _ = "text-align" .= "right"
 instance TabShow Char where
   showAsTable _ _ i = H.toHtml i
   showListAsTable _ _ i = H.toHtml i
   tableLevel _ = TabListItem
+  tableCellClass _ = "Char"
 instance ( TabShow s, TabShow (TSDLegend s) )
            => TabShow [s] where
   type TSDLegend [s] = TSDLegend s
@@ -95,6 +128,10 @@ instance ( TabShow s, TabShow (TSDLegend s) )
           TabTupRows  -> TabListCols
           TabListCols -> TabListRows
           TabListRows -> TabListCols
+  tableCellClass = ("List-"<>) . tableCellClass . fmap head
+  defaultStyling = defaultStyling . fmap head
+  defaultTdStyle _ = mempty
+  defaultTrStyle _ = mempty
   
 instance (TabShow s, TabShow t) => TabShow (s,t) where
   type TSDLegend (s,t) = (TSDLegend s, TSDLegend t)
@@ -104,26 +141,28 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
                              <> snd colEnv (showAsTable (fmap snd l) py y)
    where colEnv = case tableLevel $ Just x of
           TabTupCols  -> (id, case tableLevel $ Just y of
-                                         TabListItem -> H.td
-                                         TabAtomic   -> H.td
+                                         TabListItem -> tdy
+                                         TabAtomic   -> tdy
                                          TabListCols -> id
                                          TabTupCols  -> id
-                                         _           -> H.td . H.table )
+                                         _           -> tdy . H.table )
           TabTupRows  -> (id, case tableLevel $ Just y of
                                          TabListRows -> id
                                          TabTupRows  -> id
-                                         _           -> H.tr )
-          TabListCols -> (H.tr, H.tr . case tableLevel $ Just y of
+                                         _           -> try )
+          TabListCols -> (trx, try . case tableLevel $ Just y of
                                          TabListCols -> id
                                          TabTupCols  -> id
                                          _           -> H.table )
-          TabListRows -> (H.td . H.table, H.td . H.table)
-          _           -> (H.td, case tableLevel $ Just y of
-                                         TabListItem -> H.td
-                                         TabAtomic   -> H.td
+          TabListRows -> (tdx . H.table, tdy . H.table)
+          _           -> (tdx, case tableLevel $ Just y of
+                                         TabListItem -> tdy
+                                         TabAtomic   -> tdy
                                          TabListCols -> id
                                          TabTupCols  -> id
-                                         _           -> H.td . H.table )
+                                         _           -> tdy . H.table )
+         [tdx,trx] = fmap (!asHTMLClass (tableCellClass $ Just x)) <$> [H.td, H.tr]
+         [tdy,try] = fmap (!asHTMLClass (tableCellClass $ Just y)) <$> [H.td, H.tr]
 
   tableLevel pq = case tableLevel $ fmap fst pq of
           TabListItem -> TabTupCols
@@ -132,13 +171,27 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
           TabTupRows  -> TabTupRows
           TabListCols -> TabTupRows
           TabListRows -> TabTupCols
+  tableCellClass pq = tableCellClass (fmap fst pq) <> "-" <> tableCellClass (fmap snd pq)
+  defaultStyling pq = defaultStyling (fmap fst pq) <> defaultStyling (fmap snd pq)
+  defaultTdStyle _ = mempty
+  defaultTrStyle _ = mempty
 
 instance (Show s, TabShow s) => IHaskellDisplay (Table s) where
   display (Table i l)
-      = display . H.table $ showAsTable l (precompute i) i
+      = display $
+          H.div (
+               css2html stylings <>
+               H.table (showAsTable l (precompute i) i)
+                     ! asHTMLClass (tableCellClass $ Just i)
+             ) ! HA.class_ "IHaskell-table"
    where tableEnv = case tableLevel $ Just i of
           TabAtomic -> id
           _         -> H.table
+         stylings = defaultStyling $ Just i
   
+
+
+css2html :: CSS -> HTML
+css2html = H.style . H.preEscapedText . renderCSS
 
 
