@@ -26,20 +26,32 @@ import qualified Text.Blaze.Html4.Strict as H
 import qualified Text.Blaze.Html4.Strict.Attributes as HA
 
 import Stitch
+import Stitch.Combinators
 
 import Data.Monoid
 import Data.String (IsString(..))
+import Control.Monad (forM_)
 
 -- | A tabular view of Haskell data.
 data Table d = Table { getTableContent :: d
                      , tableLegend :: Maybe (TSDLegend d)
+                     , tableStyle :: CSS
                      }
 
+globalDefStyle :: CSS
+globalDefStyle = do
+   "table"? do
+      forM_ [id, ("td"?), ("tr"?)]
+             ($ "border-style" .= "none")
+      "td"? "padding-left" .= "1.5em"
+      "thead"? "border-bottom" -: do
+          "style" .= "solid"
+
 tabular :: d -> Table d
-tabular x = Table x Nothing
+tabular x = Table x Nothing globalDefStyle
 
 tableWithLegend :: TabShow d => TSDLegend d -> d -> Table d
-tableWithLegend legend x = Table x $ pure legend
+tableWithLegend legend x = Table x (pure legend) globalDefStyle
 
 type HTML = H.Html
 
@@ -177,10 +189,10 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
   defaultTrStyle _ = mempty
 
 instance (Show s, TabShow s) => IHaskellDisplay (Table s) where
-  display (Table i l)
+  display (Table i l globalSty)
       = display $
           H.div (
-               css2html stylings <>
+               css2html (".IHaskell-table"? globalSty<>stylings) <>
                H.table (showAsTable l (precompute i) i)
                      ! asHTMLClass (tableCellClass $ Just i)
              ) ! HA.class_ "IHaskell-table"
@@ -192,6 +204,6 @@ instance (Show s, TabShow s) => IHaskellDisplay (Table s) where
 
 
 css2html :: CSS -> HTML
-css2html = H.style . H.preEscapedText . renderCSS
+css2html = {-! HA.scoped True -} H.style . H.preEscapedText . renderCSS
 
 
