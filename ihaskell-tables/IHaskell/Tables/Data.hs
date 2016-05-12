@@ -29,8 +29,12 @@ import Stitch
 import Stitch.Combinators
 
 import Data.Monoid
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.String (IsString(..))
+import Numeric (showGFloat)
 import Control.Monad (forM_)
+import Control.Arrow
 
 -- | A tabular view of Haskell data.
 data Table d = Table { getTableContent :: d
@@ -55,12 +59,8 @@ tableWithLegend legend x = Table x (pure legend) globalDefStyle
 
 type HTML = H.Html
 
-class HTClassy s where
-  asHTMLClass :: String -> s
-instance HTClassy Selector where
-  asHTMLClass = fromString . ('.':)
-instance HTClassy H.Attribute where
-  asHTMLClass = HA.class_ . fromString
+asHTMLClass :: String -> H.Attribute
+asHTMLClass = HA.class_ . fromString
 
 type HTMLClass = String
 
@@ -127,6 +127,13 @@ instance TabShow Char where
   showListAsTable _ _ i = H.toHtml i
   tableLevel _ = TabListItem
   tableCellClass _ = "Char"
+instance TabShow Double where
+  type SharedPrecomputation Double = FloatShowReps Double
+  precompute n = FloatShowReps
+               $ Map.singleton n [showGFloat (Just preci) n "" | preci<-[0..]]
+  showAsTable _ (FloatShowReps lookSRep) n = H.toHtml . head $ lookSRep Map.! n
+  tableCellClass _ = "Double"
+  defaultTdStyle _ = "text-align" .= "left"
 instance ( TabShow s, TabShow (TSDLegend s) )
            => TabShow [s] where
   type TSDLegend [s] = TSDLegend s
@@ -206,4 +213,16 @@ instance (Show s, TabShow s) => IHaskellDisplay (Table s) where
 css2html :: CSS -> HTML
 css2html = {-! HA.scoped True -} H.style . H.preEscapedText . renderCSS
 
+
+
+newtype FloatShowReps f = FloatShowReps { getFloatShowReps :: Map f [String] }
+
+instance (RealFloat f) => Monoid (FloatShowReps f) where
+  mempty = FloatShowReps mempty
+  mappend (FloatShowReps f1) (FloatShowReps f2)
+              = FloatShowReps . Map.fromList . rmFalseDups . Map.toList $ f1<>f2
+   where rmFalseDups [] =[]
+         rmFalseDups (o@(vh,(rh:_)) : vs) = case span ((==rh) . head . snd) vs of
+             ([], _)     -> o : rmFalseDups vs
+             (fDup, vs') -> rmFalseDups $ map (second tail) (o:fDup) ++ vs'
 

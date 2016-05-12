@@ -22,6 +22,7 @@ library
   -- other-modules:       
   -- other-extensions:    
   build-depends:       base >=4.8 && <4.9,
+                       containers,
                        ihaskell >= 0.8.4 && < 0.9,
                        blaze-html,
                        ihaskell-blaze,
