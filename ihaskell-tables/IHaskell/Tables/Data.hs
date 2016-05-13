@@ -266,12 +266,18 @@ instance (Ord f) => Ord (NaNSafe f) where
     | a/=a, b/=b     = EQ
     | otherwise      = compare a b
 
-instance (RealFloat f) => Monoid (FloatShowReps f) where
+instance (RealFloat f, Read f) => Monoid (FloatShowReps f) where
   mempty = FloatShowReps mempty
   mappend (FloatShowReps f1) (FloatShowReps f2)
-              = FloatShowReps . Map.fromList . rmFalseDups . Map.toList $ f1<>f2
-   where rmFalseDups [] =[]
-         rmFalseDups (o@(vh,(rh:_)) : vs) = case span ((==rh) . head . snd) vs of
-             ([], _)     -> o : rmFalseDups vs
-             (fDup, vs') -> rmFalseDups $ map (second tail) (o:fDup) ++ vs'
+              = FloatShowReps . Map.fromList . rmAllFDups . Map.toList $ f1<>f2
+   where rmFalseDups _ [] = ([], False)
+         rmFalseDups bck (o@(NaNSafe vh,(rh:rhs)) : vs)
+                   = case takeWhile (conflicts . head . snd) =<< [vs,bck] of
+             [] -> first (o:) $ rmFalseDups (o:bck) vs
+             _  -> ((NaNSafe vh, rhs) : fst (rmFalseDups (o:bck) vs), True)
+          where conflicts rc = abs (vh - read rc) <= δrd
+                δrd = abs $ vh - read rh
+         rmAllFDups l = case rmFalseDups [] l of
+               (done, False) -> done
+               (step, True)  -> rmAllFDups step
 
