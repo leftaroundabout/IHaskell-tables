@@ -130,8 +130,10 @@ instance TabShow Char where
 instance TabShow Double where
   type SharedPrecomputation Double = FloatShowReps Double
   precompute n = FloatShowReps
-               $ Map.singleton n [showGFloat (Just preci) n "" | preci<-[0..]]
-  showAsTable _ (FloatShowReps lookSRep) n = H.toHtml . head $ lookSRep Map.! n
+               $ Map.singleton (NaNSafe n)
+                               [showGFloat (Just preci) n "" | preci<-[0..]]
+  showAsTable _ (FloatShowReps lookSRep) n
+        = H.toHtml . head $ lookSRep Map.! NaNSafe n
   tableCellClass _ = "Double"
   defaultTdStyle _ = "text-align" .= "left"
 instance ( TabShow s, TabShow (TSDLegend s) )
@@ -215,7 +217,21 @@ css2html = {-! HA.scoped True -} H.style . H.preEscapedText . renderCSS
 
 
 
-newtype FloatShowReps f = FloatShowReps { getFloatShowReps :: Map f [String] }
+newtype FloatShowReps f
+    = FloatShowReps { getFloatShowReps :: Map (NaNSafe f) [String] }
+
+-- | Make IEEE-754 fully-ordered: @-∞ < -1 < 0 < 1 < ∞ < NaN@.
+--   Only this way are floats actually safe as `Map` keys.
+newtype NaNSafe f = NaNSafe { getNaNSafeNum :: f }
+
+instance (Eq f) => Eq (NaNSafe f) where
+  NaNSafe a == NaNSafe b = a/=a && b/=b || a==b
+instance (Ord f) => Ord (NaNSafe f) where
+  compare (NaNSafe a) (NaNSafe b)
+    | a/=a, b==b     = GT
+    | b/=b, a==a     = LT
+    | a/=a, b/=b     = EQ
+    | otherwise      = compare a b
 
 instance (RealFloat f) => Monoid (FloatShowReps f) where
   mempty = FloatShowReps mempty
