@@ -14,6 +14,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE LambdaCase           #-}
 
 module IHaskell.Tables.Data (Table, tabular, tableWithLegend, TabShow) where
 
@@ -24,14 +25,18 @@ import IHaskell.Display.Blaze
 import Text.Blaze.Html ((!))
 import qualified Text.Blaze.Html4.Strict as H
 import qualified Text.Blaze.Html4.Strict.Attributes as HA
+import qualified Text.Blaze.Html.Renderer.Utf8 as HR
 
-import Stitch
-import Stitch.Combinators
+import Stitch as Stitch
+import Stitch.Combinators as Stitch
+import Stitch.Render as Stitch
+import Control.Monad.Stitch as Stitch
 
 import Data.Monoid
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.String (IsString(..))
+import qualified Data.Text as Txt
 import Numeric (showGFloat)
 import Control.Monad (forM_)
 import Control.Arrow
@@ -114,28 +119,49 @@ instance TabShow () where
   showListAsTable _ _ _ = mempty
   tableLevel _ = TabListItem
   tableCellClass _ = "Unit"
+
 instance TabShow Int where
   showAsTable _ _ i = H.toHtml i
   tableCellClass _ = "Int"
   defaultTdStyle _ = "text-align" .= "right"
+
 instance TabShow Integer where
   showAsTable _ _ i = H.toHtml i
   tableCellClass _ = "Integer"
   defaultTdStyle _ = "text-align" .= "right"
+
 instance TabShow Char where
   showAsTable _ _ i = H.toHtml i
   showListAsTable _ _ i = H.toHtml i
   tableLevel _ = TabListItem
   tableCellClass _ = "Char"
+
 instance TabShow Double where
   type SharedPrecomputation Double = FloatShowReps Double
   precompute n = FloatShowReps
                $ Map.singleton (NaNSafe n)
                                [showGFloat (Just preci) n "" | preci<-[0..]]
   showAsTable _ (FloatShowReps lookSRep) n
-        = H.toHtml . head $ lookSRep Map.! NaNSafe n
+        = H.toHtml . stringRep $ lookSRep Map.! NaNSafe n
+   where stringRep (q₀:_)
+          | read q₀ ~= n  = mantissaMod q₀ H.toHtml
+         stringRep (_:_:_:q₃:_) = mantissaMod q₃ $ reverse >>> \case
+                   mω:mψ:ms -> H.toHtml (reverse ms)
+                            <> withStyle ("opacity".="0.42") (H.span $ H.toHtml mψ)
+                            <> withStyle ("opacity".="0.12") (H.span $ H.toHtml mω)
+         mantissaMod q f = avoidSpace $ f mantis <> case expon of
+                 []       -> mempty
+                 ('e':ex) -> H.preEscapedText "&middot;" <> H.sub "10"
+                                   <> H.sup (H.toHtml ex)
+          where (mantis,expon) = break (=='e') q
+         a ~= b   -- virtually-equal (up to rounding of small rationals in floating-point)
+             = (a/=a && b/=b) -- both NaN
+               || a==b
+               || abs (b-a) <= ε*(abs a+abs b)
+         ε = 2e-15
   tableCellClass _ = "Double"
   defaultTdStyle _ = "text-align" .= "left"
+
 instance ( TabShow s, TabShow (TSDLegend s) )
            => TabShow [s] where
   type TSDLegend [s] = TSDLegend s
@@ -215,7 +241,14 @@ instance (Show s, TabShow s) => IHaskellDisplay (Table s) where
 css2html :: CSS -> HTML
 css2html = {-! HA.scoped True -} H.style . H.preEscapedText . renderCSS
 
+withStyle :: CSS -> HTML -> HTML
+withStyle s h = h ! HA.style (H.toValue sren)
+ where sren = case runStitch $ "?"? s of
+         ((), blck) -> case Txt.unpack $ Stitch.compressed blck of
+             ('?':'{':blcc) -> takeWhile (/='}') blcc
 
+avoidSpace :: HTML -> HTML
+avoidSpace = H.unsafeLazyByteString . HR.renderHtml
 
 newtype FloatShowReps f
     = FloatShowReps { getFloatShowReps :: Map (NaNSafe f) [String] }

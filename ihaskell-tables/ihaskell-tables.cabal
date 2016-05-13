@@ -22,10 +22,10 @@ library
   -- other-modules:       
   -- other-extensions:    
   build-depends:       base >=4.8 && <4.9,
-                       containers,
+                       containers, text,
                        ihaskell >= 0.8.4 && < 0.9,
                        blaze-html,
                        ihaskell-blaze,
-                       stitch >= 0.3 && < 0.4
+                       stitch >= 0.3 && < 0.3.5
   -- hs-source-dirs:      
   default-language:    Haskell2010
