@@ -15,6 +15,8 @@
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE UnicodeSyntax        #-}
 
 module IHaskell.Tables.Data (Table, tabular, tableWithLegend, TabShow) where
 
@@ -138,15 +140,13 @@ instance TabShow Char where
 
 instance TabShow Double where
   type SharedPrecomputation Double = FloatShowReps Double
-  precompute n = FloatShowReps
-               $ Map.singleton (NaNSafe n)
-                               [showGFloat (Just preci) n "" | preci<-[0..]]
-  showAsTable _ (FloatShowReps lookSRep) n
-        = H.toHtml . stringRep $ lookSRep Map.! NaNSafe n
-   where stringRep (q₀:_)
-          | read q₀ ~= n  = mantissaMod q₀ H.toHtml
+  precompute = singletonFSR
+  showAsTable _ lookSRep n = H.toHtml $ stringRep fsr
+   where Just fsr = lookupFSR lookSRep n
+         stringRep (q₀:_)
+          | read q₀ ~= n  = mantissaMod q₀ toHtmlWithEnSpaces
          stringRep (_:_:_:q₃:_) = mantissaMod q₃ $ reverse >>> \case
-                   mω:mψ:ms -> H.toHtml (reverse ms)
+                   mω:mψ:ms -> toHtmlWithEnSpaces (reverse ms)
                             <> withStyle ("opacity".="0.42") (H.span $ H.toHtml mψ)
                             <> withStyle ("opacity".="0.12") (H.span $ H.toHtml mω)
          mantissaMod q f = avoidSpace $ f mantis <> case expon of
@@ -271,10 +271,23 @@ instance (Ord f) => Ord (NaNSafe f) where
     | a/=a, b/=b     = EQ
     | otherwise      = compare a b
 
-instance (RealFloat f, Read f) => Monoid (FloatShowReps f) where
+singletonFSR :: Double -> FloatShowReps Double
+singletonFSR = abs >>> \n -> FloatShowReps
+                $ Map.singleton (NaNSafe n)
+                                [showGFloat (Just preci) n "" | preci<-[0..]]
+
+lookupFSR :: (Num f, Ord f) => FloatShowReps f -> f -> Maybe [String]
+lookupFSR (FloatShowReps reps) n
+   | n<0        = map negative <$> Map.lookup (NaNSafe $ -n) reps
+   | otherwise  = map positive <$> Map.lookup (NaNSafe n) reps
+ where positive = (' ':)
+       negative nr = spcs ++ '-':num
+        where (spcs,num) = span (==' ') nr
+
+instance ∀ f . (RealFloat f, Read f) => Monoid (FloatShowReps f) where
   mempty = FloatShowReps mempty
   mappend (FloatShowReps f1) (FloatShowReps f2)
-              = FloatShowReps . Map.fromList . rmAllFDups . Map.toList $ f1<>f2
+              = FloatShowReps . Map.fromList . ascIndent . rmAllFDups . Map.toList $ f1<>f2
    where rmFalseDups _ [] = ([], False)
          rmFalseDups bck (o@(NaNSafe vh,(rh:rhs)) : vs)
                    = case takeWhile (conflicts . head . snd) =<< [vs,bck] of
@@ -285,4 +298,16 @@ instance (RealFloat f, Read f) => Monoid (FloatShowReps f) where
          rmAllFDups l = case rmFalseDups [] l of
                (done, False) -> done
                (step, True)  -> rmAllFDups step
+         
+         ascIndent, descInd :: [(NaNSafe f, [String])] -> [(NaNSafe f, [String])]
+         ascIndent = descInd . reverse
+         descInd [] = []
+         descInd (q₁@(_,(r₁:_)):qs) = q₁ : descInd (map (second $ map indMore) qs)
+          where indMore r | r<r₁       = r
+                          | otherwise  = indMore (' ':r)
 
+
+toHtmlWithEnSpaces :: String -> HTML
+toHtmlWithEnSpaces = foldMap ubs
+ where ubs ' ' = H.preEscapedText "&ensp;"
+       ubs c = H.toHtml c
