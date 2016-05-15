@@ -162,6 +162,11 @@ instance TabShow Double where
   tableCellClass _ = "Double"
   defaultTdStyle _ = "text-align" .= "left"
 
+instance TabShow Float where
+  type SharedPrecomputation Float = FloatShowReps Double
+  precompute n = precompute (realToFrac n :: Double)
+  showAsTable l pc n = showAsTable l pc (realToFrac n :: Double)
+
 instance ( TabShow s, TabShow (TSDLegend s) )
            => TabShow [s] where
   type TSDLegend [s] = TSDLegend s
