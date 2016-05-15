@@ -143,8 +143,8 @@ instance TabShow Double where
   precompute = singletonFSR
   showAsTable _ lookSRep n = H.toHtml $ stringRep fsr
    where Just fsr = lookupFSR lookSRep n
-         stringRep (q₀:_)
-          | read q₀ ~= n  = mantissaMod q₀ toHtmlWithEnSpaces
+         stringRep qs | (exact:_) <- filter ((~=n) . read) $ take 3 qs
+               = mantissaMod exact toHtmlWithEnSpaces
          stringRep (_:_:_:q₃:_) = mantissaMod q₃ $ reverse >>> \case
                    mω:mψ:ms -> toHtmlWithEnSpaces (reverse ms)
                             <> withStyle ("opacity".="0.42") (H.span $ H.toHtml mψ)
@@ -158,7 +158,7 @@ instance TabShow Double where
              = (a/=a && b/=b) -- both NaN
                || a==b
                || abs (b-a) <= ε*(abs a+abs b)
-         ε = 2e-15
+         ε = 2e-14
   tableCellClass _ = "Double"
   defaultTdStyle _ = "text-align" .= "left"
 
@@ -255,8 +255,8 @@ withStyle s h = h ! HA.style (H.toValue sren)
 avoidSpace :: HTML -> HTML
 avoidSpace = H.unsafeLazyByteString . HR.renderHtml
 
-newtype FloatShowReps f
-    = FloatShowReps { getFloatShowReps :: Map (NaNSafe f) [String] }
+data FloatShowReps f
+    = FloatShowReps { negativeShowReps, positiveShowReps :: Map (NaNSafe f) [String] }
 
 -- | Make IEEE-754 fully-ordered: @-∞ < -1 < 0 < 1 < ∞ < NaN@.
 --   Only this way are floats actually safe as `Map` keys.
@@ -272,22 +272,25 @@ instance (Ord f) => Ord (NaNSafe f) where
     | otherwise      = compare a b
 
 singletonFSR :: Double -> FloatShowReps Double
-singletonFSR = abs >>> \n -> FloatShowReps
-                $ Map.singleton (NaNSafe n)
-                                [showGFloat (Just preci) n "" | preci<-[0..]]
+singletonFSR x | x<0        = FloatShowReps fsrMap mempty
+               | otherwise  = FloatShowReps mempty fsrMap
+ where fsrMap = Map.singleton (NaNSafe n)
+                              [showGFloat (Just preci) n "" | preci<-[0..]]
+       n = abs x
 
 lookupFSR :: (Num f, Ord f) => FloatShowReps f -> f -> Maybe [String]
-lookupFSR (FloatShowReps reps) n
-   | n<0        = map negative <$> Map.lookup (NaNSafe $ -n) reps
-   | otherwise  = map positive <$> Map.lookup (NaNSafe n) reps
+lookupFSR (FloatShowReps negReps posReps) n
+   | n<0        = map negative <$> Map.lookup (NaNSafe $ -n) negReps
+   | otherwise  = map positive <$> Map.lookup (NaNSafe n) posReps
  where positive = (' ':)
        negative nr = spcs ++ '-':num
         where (spcs,num) = span (==' ') nr
 
 instance ∀ f . (RealFloat f, Read f) => Monoid (FloatShowReps f) where
-  mempty = FloatShowReps mempty
-  mappend (FloatShowReps f1) (FloatShowReps f2)
-              = FloatShowReps . Map.fromList . ascIndent . rmAllFDups . Map.toList $ f1<>f2
+  mempty = FloatShowReps mempty mempty
+  mappend (FloatShowReps f₁n f₁p) (FloatShowReps f₂n f₂p) = FloatShowReps
+               (Map.fromList . ascIndent . rmAllFDups . Map.toList $ f₁n<>f₂n)
+               (Map.fromList . ascIndent . rmAllFDups . Map.toList $ f₁p<>f₂p)
    where rmFalseDups _ [] = ([], False)
          rmFalseDups bck (o@(NaNSafe vh,(rh:rhs)) : vs)
                    = case takeWhile (conflicts . head . snd) =<< [vs,bck] of
