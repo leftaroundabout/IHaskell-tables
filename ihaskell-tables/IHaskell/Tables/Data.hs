@@ -35,8 +35,10 @@ import Stitch.Render as Stitch
 import Control.Monad.Stitch as Stitch
 
 import Data.Monoid
+import Data.Function ((&))
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Char (isSpace)
 import Data.String (IsString(..))
 import qualified Data.Text as Txt
 import Numeric (showGFloat)
@@ -57,6 +59,18 @@ globalDefStyle = do
       "td"? "padding-left" .= "1.5em"
       "thead"? "border-bottom" -: do
           "style" .= "solid"
+   ".approxWithTooltip"? do
+     ".exactShowTooltip"? do
+         "visibility" .= "hidden"
+         "position" .= "absolute"
+         "background-color" .= "#ddd"
+         "color" .= "#111"
+         "border" .= "1px solid #bbb"
+         "border-radius" .= "3px"
+         "z-index" .= "1"
+   ".approxWithTooltip:hover"?
+     ".exactShowTooltip"? do
+         "visibility" .= "visible !important"
 
 tabular :: d -> Table d
 tabular x = Table x Nothing globalDefStyle
@@ -141,7 +155,14 @@ instance TabShow Char where
 instance TabShow Double where
   type SharedPrecomputation Double = FloatShowReps Double
   precompute = singletonFSR
-  showAsTable _ lookSRep n = H.toHtml $ stringRep fsr
+  showAsTable _ lookSRep n = H.div (
+                      ( H.span (avoidSpace . toHtmlWithEnSpaces
+                                 $ takeWhile isSpace (head fsr) ++ show n)
+                           ! HA.class_ "exactShowTooltip"
+                           & withStyle ( "position".="absolute"
+                                      <> "visibility".="hidden" ) )
+                      <> stringRep fsr
+                      ) ! HA.class_ "approxWithTooltip"
    where Just fsr = lookupFSR lookSRep n
          stringRep qs | (exact:_) <- filter ((~=n) . read) $ take 3 qs
                = mantissaMod exact toHtmlWithEnSpaces
