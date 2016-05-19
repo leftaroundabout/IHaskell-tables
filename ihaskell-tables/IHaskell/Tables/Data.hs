@@ -18,7 +18,8 @@
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE UnicodeSyntax        #-}
 
-module IHaskell.Tables.Data (Table, tabular, tableWithLegend, TabShow) where
+module IHaskell.Tables.Data ( Table, tabular, tableWithLegend, TabShow
+                            , approxAndTooltip ) where
 
 
 import IHaskell.Display
@@ -155,14 +156,10 @@ instance TabShow Char where
 instance TabShow Double where
   type SharedPrecomputation Double = FloatShowReps Double
   precompute = singletonFSR
-  showAsTable _ lookSRep n = H.div (
-                      ( H.span (avoidSpace . toHtmlWithEnSpaces
+  showAsTable _ lookSRep n = approxAndTooltip
+                              (stringRep fsr)
+                              (avoidGaps . toHtmlWithEnSpaces
                                  $ takeWhile isSpace (head fsr) ++ show n)
-                           ! HA.class_ "exactShowTooltip"
-                           & withStyle ( "position".="absolute"
-                                      <> "visibility".="hidden" ) )
-                      <> stringRep fsr
-                      ) ! HA.class_ "approxWithTooltip"
    where Just fsr = lookupFSR lookSRep n
          stringRep qs | (exact:_) <- filter ((~=n) . read) $ take 3 qs
                = mantissaMod exact toHtmlWithEnSpaces
@@ -170,7 +167,7 @@ instance TabShow Double where
                    mω:mψ:ms -> toHtmlWithEnSpaces (reverse ms)
                             <> withStyle ("opacity".="0.42") (H.span $ H.toHtml mψ)
                             <> withStyle ("opacity".="0.12") (H.span $ H.toHtml mω)
-         mantissaMod q f = avoidSpace $ f mantis <> case expon of
+         mantissaMod q f = avoidGaps $ f mantis <> case expon of
                  []       -> mempty
                  ('e':ex) -> H.preEscapedText "&middot;" <> H.sub "10"
                                    <> H.sup (H.toHtml ex)
@@ -273,8 +270,8 @@ withStyle s h = h ! HA.style (H.toValue sren)
          ((), blck) -> case Txt.unpack $ Stitch.compressed blck of
              ('?':'{':blcc) -> takeWhile (/='}') blcc
 
-avoidSpace :: HTML -> HTML
-avoidSpace = H.unsafeLazyByteString . HR.renderHtml
+avoidGaps :: HTML -> HTML
+avoidGaps = H.unsafeLazyByteString . HR.renderHtml
 
 data FloatShowReps f
     = FloatShowReps { negativeShowReps, positiveShowReps :: Map (NaNSafe f) [String] }
@@ -329,9 +326,23 @@ instance ∀ f . (RealFloat f, Read f) => Monoid (FloatShowReps f) where
          descInd (q₁@(_,(r₁:_)):qs) = q₁ : descInd (map (second $ map indMore) qs)
           where indMore r | r<r₁       = r
                           | otherwise  = indMore (' ':r)
-
+ 
 
 toHtmlWithEnSpaces :: String -> HTML
 toHtmlWithEnSpaces = foldMap ubs
  where ubs ' ' = H.preEscapedText "&ensp;"
        ubs c = H.toHtml c
+
+
+
+-- | Use this if you want to display your type in two forms: one neat, concise but
+--   inexact representation, and a more precise but also more clunky one.
+approxAndTooltip :: HTML  -- ^ Short approximation / preview
+                 -> HTML  -- ^ Exact representation, will only be shown on mouse-over.
+                 -> HTML  -- ^ Markup to use in 'showAsTable'.
+approxAndTooltip approx tooltip
+    = H.div ( ( H.span tooltip ! HA.class_ "exactShowTooltip"
+                               & withStyle ( "position".="absolute"
+                                          <> "visibility".="hidden" ) )
+           <> approx
+      ) ! HA.class_ "approxWithTooltip"
