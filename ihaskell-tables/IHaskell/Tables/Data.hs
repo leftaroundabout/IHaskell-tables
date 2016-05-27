@@ -15,6 +15,7 @@
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE TupleSections        #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE UnicodeSyntax        #-}
 
@@ -35,22 +36,30 @@ import Stitch.Combinators as Stitch
 import Stitch.Render as Stitch
 import Control.Monad.Stitch as Stitch
 
-import Data.Monoid
+import Data.Semigroup
+import Data.Foldable
 import Data.Function ((&))
 import Data.Map (Map)
+import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map as Map
 import Data.Char (isSpace)
 import Data.String (IsString(..))
 import qualified Data.Text as Txt
 import Numeric (showGFloat)
+import Control.Applicative
 import Control.Monad (forM_)
 import Control.Arrow
+
+import Data.List.Stretchable (Stretch)
 
 -- | A tabular view of Haskell data.
 data Table d = Table { getTableContent :: d
                      , tableLegend :: Maybe (TSDLegend d)
                      , tableStyle :: CSS
                      }
+
+
+
 
 globalDefStyle :: CSS
 globalDefStyle = do
@@ -99,22 +108,32 @@ class (Monoid (SharedPrecomputation s)) => TabShow s where
   precompute :: s -> SharedPrecomputation s
   precompute _ = mempty
   
+  showAsPlaintext :: SharedPrecomputation s -> s -> String
+  
+  showAsPlaintextAndHtml :: SharedPrecomputation s -> s -> (String, HTML)
+  showAsPlaintextAndHtml pc i = (ptxt, fromString ptxt)
+   where ptxt = showAsPlaintext pc i
+  
   showAsTable :: Maybe (TSDLegend s) -> SharedPrecomputation s -> s
-                   -> HTML  -- might become Javascript instead.
+                   -> TableView
+  showAsTable _ pc i = TableView [pure <$> fromString ptxt] True htm
+   where (ptxt, htm) = showAsPlaintextAndHtml pc i
   
   showListAsTable :: (TabShow (TSDLegend s), Monoid (SharedPrecomputation (TSDLegend s)))
-            => Maybe (TSDLegend s) -> SharedPrecomputation s -> [s] -> HTML
+            => Maybe (TSDLegend s) -> SharedPrecomputation s -> [s] -> TableView
   showListAsTable l pc i = addLegend l $ foldMap (rowEnv . showAsTable Nothing pc) i
-   where rowEnv = case tableLevel . Just $ head i of
-          TabListItem -> id
-          TabAtomic   -> td
-          TabTupCols  -> tr
-          TabTupRows  -> td . H.table
-          TabListCols -> tr
-          TabListRows -> td . H.table
+   where rowEnv (TableView tx tp md) = txtAlignDir $ TableView tx tp (htmAlign md)
+           where (htmAlign, txtAlignDir) = case tableLevel . Just $ head i of
+                  TabListItem -> (id,           horizontalCompos)
+                  TabAtomic   -> (td,           horizontalCompos)
+                  TabTupCols  -> (tr,           verticalCompos  )
+                  TabTupRows  -> (td . H.table, horizontalCompos)
+                  TabListCols -> (tr,           verticalCompos  )
+                  TabListRows -> (td . H.table, horizontalCompos)
          addLegend Nothing t = t
-         addLegend (Just l) t = H.thead (rowEnv $ showAsTable Nothing mempty l)
-                             <> H.tbody t
+         addLegend (Just l) (TableView tx tt md)
+               = rowEnv (showAsTable Nothing mempty l)
+              <> TableView tx      False (H.tbody md)
          [td,tr] = fmap (!asHTMLClass (tableCellClass . Just $ head i)) <$> [H.td, H.tr]
   
   tableLevel :: Functor p => p s -> TableLevel
@@ -138,39 +157,39 @@ instance TabShow () where
   tableCellClass _ = "Unit"
 
 instance TabShow Int where
-  showAsTable _ _ i = H.toHtml i
+  showAsPlaintext _ = show
   tableCellClass _ = "Int"
   defaultTdStyle _ = "text-align" .= "right"
 
 instance TabShow Integer where
-  showAsTable _ _ i = H.toHtml i
+  showAsPlaintext _ = show
   tableCellClass _ = "Integer"
   defaultTdStyle _ = "text-align" .= "right"
 
 instance TabShow Char where
-  showAsTable _ _ i = H.toHtml i
-  showListAsTable _ _ i = H.toHtml i
+  showAsPlaintext _ = show
+  showListAsTable _ _ = fromString
   tableLevel _ = TabListItem
   tableCellClass _ = "Char"
 
 instance TabShow Double where
   type SharedPrecomputation Double = FloatShowReps Double
   precompute = singletonFSR
-  showAsTable _ lookSRep n = approxAndTooltip
-                              (stringRep fsr)
+  showAsTable _ lookSRep n = uncurry approxAndTooltip
+                              (stringReps fsr)
                               (avoidGaps . toHtmlWithEnSpaces
                                  $ takeWhile isSpace (head fsr) ++ show n)
    where Just fsr = lookupFSR lookSRep n
-         stringRep qs | (exact:_) <- filter ((~=n) . read) $ take 3 qs
+         stringReps qs | (exact:_) <- filter ((~=n) . read) $ take 3 qs
                = mantissaMod exact toHtmlWithEnSpaces
-         stringRep (_:_:_:q₃:_) = mantissaMod q₃ $ reverse >>> \case
+         stringReps (_:_:_:q₃:_) = mantissaMod q₃ $ reverse >>> \case
                    mω:mψ:ms -> toHtmlWithEnSpaces (reverse ms)
-                            <> withStyle ("opacity".="0.42") (H.span $ H.toHtml mψ)
-                            <> withStyle ("opacity".="0.12") (H.span $ H.toHtml mω)
-         mantissaMod q f = avoidGaps $ f mantis <> case expon of
+                     `mappend` withStyle ("opacity".="0.42") (H.span $ H.toHtml mψ)
+                     `mappend` withStyle ("opacity".="0.12") (H.span $ H.toHtml mω)
+         mantissaMod q f = (,q) . avoidGaps $ f mantis `mappend` case expon of
                  []       -> mempty
-                 ('e':ex) -> H.preEscapedText "&middot;" <> H.sub "10"
-                                   <> H.sup (H.toHtml ex)
+                 ('e':ex) -> H.preEscapedText "&middot;" `mappend` H.sub "10"
+                                   `mappend` H.sup (H.toHtml ex)
           where (mantis,expon) = break (=='e') q
          a ~= b   -- virtually-equal (up to rounding of small rationals in floating-point)
              = (a/=a && b/=b) -- both NaN
@@ -207,9 +226,12 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
   type TSDLegend (s,t) = (TSDLegend s, TSDLegend t)
   type SharedPrecomputation (s,t) = (SharedPrecomputation s, SharedPrecomputation t)
   precompute (x,y) = (precompute x, precompute y)
-  showAsTable l (px,py) (x,y) = fst colEnv (showAsTable (fmap fst l) px x)
-                             <> snd colEnv (showAsTable (fmap snd l) py y)
-   where colEnv = case tableLevel $ Just x of
+  showAsTable l (px,py) (x,y)
+           = TableView (ptx++pty) False
+                              $ fst colEnv htmx `mappend` snd colEnv htmy
+   where TableView ptx False htmx = verticalCompos $ showAsTable (fmap fst l) px x
+         TableView pty False htmy = verticalCompos $ showAsTable (fmap snd l) py y
+         colEnv = case tableLevel $ Just x of
           TabTupCols  -> (id, case tableLevel $ Just y of
                                          TabListItem -> tdy
                                          TabAtomic   -> tdy
@@ -242,7 +264,7 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
           TabListCols -> TabTupRows
           TabListRows -> TabTupCols
   tableCellClass pq = tableCellClass (fmap fst pq) <> "-" <> tableCellClass (fmap snd pq)
-  defaultStyling pq = defaultStyling (fmap fst pq) <> defaultStyling (fmap snd pq)
+  defaultStyling pq = defaultStyling (fmap fst pq) `mappend` defaultStyling (fmap snd pq)
   defaultTdStyle _ = mempty
   defaultTrStyle _ = mempty
 
@@ -250,11 +272,11 @@ instance (Show s, TabShow s) => IHaskellDisplay (Table s) where
   display (Table i l globalSty)
       = display $
           H.div (
-               css2html (".IHaskell-table"? globalSty<>stylings) <>
-               H.table (showAsTable l (precompute i) i)
-                     ! asHTMLClass (tableCellClass $ Just i)
+               css2html (".IHaskell-table"? globalSty`mappend`stylings) `mappend`
+               H.table htm ! asHTMLClass (tableCellClass $ Just i)
              ) ! HA.class_ "IHaskell-table"
-   where tableEnv = case tableLevel $ Just i of
+   where TableView ptx False htm = showAsTable l (precompute i) i
+         tableEnv = case tableLevel $ Just i of
           TabAtomic -> id
           _         -> H.table
          stylings = defaultStyling $ Just i
@@ -337,12 +359,51 @@ toHtmlWithEnSpaces = foldMap ubs
 
 -- | Use this if you want to display your type in two forms: one neat, concise but
 --   inexact representation, and a more precise but also more clunky one.
-approxAndTooltip :: HTML  -- ^ Short approximation / preview
-                 -> HTML  -- ^ Exact representation, will only be shown on mouse-over.
-                 -> HTML  -- ^ Markup to use in 'showAsTable'.
-approxAndTooltip approx tooltip
-    = H.div ( ( H.span tooltip ! HA.class_ "exactShowTooltip"
-                               & withStyle ( "position".="absolute"
-                                          <> "visibility".="hidden" ) )
-           <> approx
+approxAndTooltip
+    :: HTML        -- ^ Short approximation / preview, for concise HTML tables.
+    -> String      -- ^ Plaintext representation, should be /reasonably/ exact.
+    -> HTML        -- ^ Exact representation, will only be shown on mouse-over in HTML.
+    -> TableView   -- ^ Markup to use in 'showAsTable'.
+approxAndTooltip approx plaintext tooltip
+    = TableView [pure<$>fromString plaintext] True
+              $ H.div ( ( H.span tooltip ! HA.class_ "exactShowTooltip"
+                               & withStyle ( ("position".="absolute")
+                                   `mappend` ("visibility".="hidden") ) )
+                `mappend` approx
       ) ! HA.class_ "approxWithTooltip"
+
+
+
+
+data TableView = TableView {
+         plaintextTable :: [TextBlock]
+       , isTransposed :: Bool
+       , htmlTable :: HTML
+       }
+instance Semigroup TableView where
+  TableView t₁ t₁t m₁<>TableView t₂ t₂t m₂
+         = TableView (zipWith (<>) t₁ t₂') t₁t (mappend m₁ m₂)
+   where t₂' | t₁t==t₂t   = t₂
+             | otherwise  = map transposeTB t₂
+instance Monoid TableView where
+  mempty = TableView [pure""] True mempty
+  mappend = (<>)
+  
+instance IsString TableView where
+  
+
+type TextBlock = Stretch (Stretch Char)
+
+transposeTB :: TextBlock -> TextBlock
+transposeTB = sequenceA
+
+verticalCompos, horizontalCompos :: TableView -> TableView
+verticalCompos (TableView t False m)
+              = TableView t False m
+verticalCompos (TableView t True m)
+              = TableView (transposeTB<$>t) False m
+horizontalCompos (TableView t True m)
+                = TableView t True m
+horizontalCompos (TableView [] _ m) = TableView [pure""] True m
+horizontalCompos (TableView (t₀:ts) False m)
+                = TableView (pure . sconcat $ transposeTB<$>(t₀:|ts)) True m
