@@ -50,7 +50,7 @@ import Control.Applicative
 import Control.Monad (forM_)
 import Control.Arrow
 
-import Data.List.Stretchable (Stretch)
+import Data.List.Stretchable
 
 -- | A tabular view of Haskell data.
 data Table d = Table { getTableContent :: d
@@ -100,6 +100,7 @@ data TableLevel = TabListItem | TabAtomic
                 | TabListCols | TabListRows
 
 class (Monoid (SharedPrecomputation s)) => TabShow s where
+  {-# MINIMAL showAsPlaintext | showAsPlaintextAndHtml | showAsTable #-}
   type TSDLegend s :: *
   type TSDLegend s = String
   type SharedPrecomputation s :: *
@@ -109,7 +110,14 @@ class (Monoid (SharedPrecomputation s)) => TabShow s where
   precompute _ = mempty
   
   showAsPlaintext :: SharedPrecomputation s -> s -> String
+  showAsPlaintext pc i = extractTxt $ showAsTable Nothing pc i
+   where extractTxt (TableView [txlines] False _) = unlines . map toList $ toList txlines
+         extractTxt tv@(TableView _ False _) = extractTxt $ horizontalCompos tv
+         extractTxt tv@(TableView _ True  _) = extractTxt $ verticalCompos tv
   
+  -- | Define this if a type can be pretty-printed in a single HTML-table cell.
+  --   Do not /call/ this method; the HTML output will not be right for actual tabular data
+  --   (lists etc.). Use 'tabular' with 'H.toHtml' if you want properly rendered tables.
   showAsPlaintextAndHtml :: SharedPrecomputation s -> s -> (String, HTML)
   showAsPlaintextAndHtml pc i = (ptxt, fromString ptxt)
    where ptxt = showAsPlaintext pc i
@@ -132,8 +140,10 @@ class (Monoid (SharedPrecomputation s)) => TabShow s where
                   TabListRows -> (td . H.table, horizontalCompos)
          addLegend Nothing t = t
          addLegend (Just l) (TableView tx tt md)
-               = rowEnv (showAsTable Nothing mempty l)
-              <> TableView tx      False (H.tbody md)
+               = TableView legendTx False (H.thead legendHtm)
+              <> TableView tx       False (H.tbody md)
+          where TableView legendTx False legendHtm
+                    = verticalCompos . rowEnv $ showAsTable Nothing mempty l
          [td,tr] = fmap (!asHTMLClass (tableCellClass . Just $ head i)) <$> [H.td, H.tr]
   
   tableLevel :: Functor p => p s -> TableLevel
@@ -268,14 +278,20 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
   defaultTdStyle _ = mempty
   defaultTrStyle _ = mempty
 
+
+instance (Show s, TabShow s) => H.ToMarkup (Table s) where
+  toMarkup = renderTable
+
 instance (Show s, TabShow s) => IHaskellDisplay (Table s) where
-  display (Table i l globalSty)
-      = display $
-          H.div (
+  display = display . renderTable
+
+renderTable :: (Show s, TabShow s) => Table s -> {-(String,-}HTML
+renderTable (Table i l globalSty)
+      = H.div (
                css2html (".IHaskell-table"? globalSty`mappend`stylings) `mappend`
-               H.table htm ! asHTMLClass (tableCellClass $ Just i)
+               (H.table htm ! asHTMLClass (tableCellClass $ Just i))
              ) ! HA.class_ "IHaskell-table"
-   where TableView ptx False htm = showAsTable l (precompute i) i
+   where TableView ptx False htm = verticalCompos $ showAsTable l (precompute i) i
          tableEnv = case tableLevel $ Just i of
           TabAtomic -> id
           _         -> H.table
@@ -390,6 +406,9 @@ instance Monoid TableView where
   mappend = (<>)
   
 instance IsString TableView where
+  fromString s = TableView [transposeTB . fmap fromString $ lines s:*("",[])]
+                           True
+                           (fromString s)
   
 
 type TextBlock = Stretch (Stretch Char)
@@ -406,4 +425,4 @@ horizontalCompos (TableView t True m)
                 = TableView t True m
 horizontalCompos (TableView [] _ m) = TableView [pure""] True m
 horizontalCompos (TableView (t₀:ts) False m)
-                = TableView (pure . sconcat $ transposeTB<$>(t₀:|ts)) True m
+                = TableView [sconcat $ transposeTB<$>(t₀:|ts)] True m
