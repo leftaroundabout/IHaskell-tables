@@ -30,6 +30,7 @@ import Text.Blaze.Html ((!))
 import qualified Text.Blaze.Html4.Strict as H
 import qualified Text.Blaze.Html4.Strict.Attributes as HA
 import qualified Text.Blaze.Html.Renderer.Utf8 as HR
+import qualified Text.Blaze.Html.Renderer.Pretty as HPretty
 
 import Stitch as Stitch
 import Stitch.Combinators as Stitch
@@ -110,10 +111,7 @@ class (Monoid (SharedPrecomputation s)) => TabShow s where
   precompute _ = mempty
   
   showAsPlaintext :: SharedPrecomputation s -> s -> String
-  showAsPlaintext pc i = extractTxt $ showAsTable Nothing pc i
-   where extractTxt (TableView [txlines] False _) = unlines . map toList $ toList txlines
-         extractTxt tv@(TableView _ False _) = extractTxt $ horizontalCompos tv
-         extractTxt tv@(TableView _ True  _) = extractTxt $ verticalCompos tv
+  showAsPlaintext _ = fst . renderTable . tabular
   
   -- | Define this if a type can be pretty-printed in a single HTML-table cell.
   --   Do not /call/ this method; the HTML output will not be right for actual tabular data
@@ -279,23 +277,30 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
   defaultTrStyle _ = mempty
 
 
-instance (Show s, TabShow s) => H.ToMarkup (Table s) where
-  toMarkup = renderTable
+instance TabShow s => H.ToMarkup (Table s) where
+  toMarkup = snd . renderTable
 
-instance (Show s, TabShow s) => IHaskellDisplay (Table s) where
-  display = display . renderTable
+instance TabShow s => IHaskellDisplay (Table s) where
+  display t = return $ Display [ plain stringDisp
+                               , html $ HPretty.renderHtml htmlDisp]
+    where (stringDisp, htmlDisp) = renderTable t
 
-renderTable :: (Show s, TabShow s) => Table s -> {-(String,-}HTML
+renderTable :: TabShow s => Table s -> (String,HTML)
 renderTable (Table i l globalSty)
-      = H.div (
+      = ( extractTxt rendrd
+        , H.div (
                css2html (".IHaskell-table"? globalSty`mappend`stylings) `mappend`
                (H.table htm ! asHTMLClass (tableCellClass $ Just i))
              ) ! HA.class_ "IHaskell-table"
-   where TableView ptx False htm = verticalCompos $ showAsTable l (precompute i) i
+        )
+   where rendrd@(TableView _ _ htm) = showAsTable l (precompute i) i
          tableEnv = case tableLevel $ Just i of
           TabAtomic -> id
           _         -> H.table
          stylings = defaultStyling $ Just i
+         extractTxt (TableView [txlines] False _) = unlines . map toList $ toList txlines
+         extractTxt tv@(TableView _ False _) = extractTxt $ horizontalCompos tv
+         extractTxt tv@(TableView _ True  _) = extractTxt $ verticalCompos tv
   
 
 
