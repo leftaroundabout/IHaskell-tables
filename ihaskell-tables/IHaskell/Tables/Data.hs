@@ -122,7 +122,7 @@ class (Monoid (SharedPrecomputation s)) => TabShow s where
   
   showAsTable :: Maybe (TSDLegend s) -> SharedPrecomputation s -> s
                    -> TableView
-  showAsTable _ pc i = TableView [pure <$> fromString ptxt] True htm
+  showAsTable _ pc i = TableView (pure $ pure <$> fromString ptxt) True htm
    where (ptxt, htm) = showAsPlaintextAndHtml pc i
   
   showListAsTable :: (TabShow (TSDLegend s), Monoid (SharedPrecomputation (TSDLegend s)))
@@ -235,7 +235,7 @@ instance (TabShow s, TabShow t) => TabShow (s,t) where
   type SharedPrecomputation (s,t) = (SharedPrecomputation s, SharedPrecomputation t)
   precompute (x,y) = (precompute x, precompute y)
   showAsTable l (px,py) (x,y)
-           = TableView (ptx++pty) False
+           = TableView (ptx<>pty) False
                               $ fst colEnv htmx `mappend` snd colEnv htmy
    where TableView ptx False htmx = verticalCompos $ showAsTable (fmap fst l) px x
          TableView pty False htmy = verticalCompos $ showAsTable (fmap snd l) py y
@@ -298,7 +298,8 @@ renderTable (Table i l globalSty)
           TabAtomic -> id
           _         -> H.table
          stylings = defaultStyling $ Just i
-         extractTxt (TableView [txlines] False _) = unlines . map toList $ toList txlines
+         extractTxt (TableView ([]:*(txlines,[])) False _)
+                         = unlines . map toList $ toList txlines
          extractTxt tv@(TableView _ False _) = extractTxt $ horizontalCompos tv
          extractTxt tv@(TableView _ True  _) = extractTxt $ verticalCompos tv
   
@@ -386,7 +387,7 @@ approxAndTooltip
     -> HTML        -- ^ Exact representation, will only be shown on mouse-over in HTML.
     -> TableView   -- ^ Markup to use in 'showAsTable'.
 approxAndTooltip approx plaintext tooltip
-    = TableView [pure<$>fromString plaintext] True
+    = TableView (pure $ pure<$>fromString plaintext) True
               $ H.div ( ( H.span tooltip ! HA.class_ "exactShowTooltip"
                                & withStyle ( ("position".="absolute")
                                    `mappend` ("visibility".="hidden") ) )
@@ -397,21 +398,21 @@ approxAndTooltip approx plaintext tooltip
 
 
 data TableView = TableView {
-         plaintextTable :: [TextBlock]
+         plaintextTable :: Stretch TextBlock
        , isTransposed :: Bool
        , htmlTable :: HTML
        }
 instance Semigroup TableView where
   TableView t₁ t₁t m₁<>TableView t₂ t₂t m₂
-         = TableView (zipWith (<>) t₁ t₂') t₁t (mappend m₁ m₂)
+         = TableView (liftA2 (<>) t₁ t₂') t₁t (mappend m₁ m₂)
    where t₂' | t₁t==t₂t   = t₂
-             | otherwise  = map transposeTB t₂
+             | otherwise  = transposeTB<$>t₂
 instance Monoid TableView where
-  mempty = TableView [pure""] True mempty
+  mempty = TableView (pure $ pure"") True mempty
   mappend = (<>)
   
 instance IsString TableView where
-  fromString s = TableView [transposeTB . fmap fromString $ lines s:*("",[])]
+  fromString s = TableView (pure . transposeTB . fmap fromString $ lines s:*("",[]))
                            True
                            (fromString s)
   
@@ -428,6 +429,6 @@ verticalCompos (TableView t True m)
               = TableView (transposeTB<$>t) False m
 horizontalCompos (TableView t True m)
                 = TableView t True m
-horizontalCompos (TableView [] _ m) = TableView [pure""] True m
-horizontalCompos (TableView (t₀:ts) False m)
-                = TableView [sconcat $ transposeTB<$>(t₀:|ts)] True m
+horizontalCompos (TableView tsbs False m)
+                = TableView (pure . sconcat $ transposeTB<$>(t₀:|ts)) True m
+ where (t₀:ts) = toList tsbs
