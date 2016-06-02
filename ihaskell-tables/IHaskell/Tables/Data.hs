@@ -122,13 +122,13 @@ class (Monoid (SharedPrecomputation s)) => TabShow s where
   
   showAsTable :: Maybe (TSDLegend s) -> SharedPrecomputation s -> s
                    -> TableView
-  showAsTable _ pc i = TableView (pure $ pure <$> fromString ptxt) True htm
+  showAsTable _ pc i = TableView (pure $ pure <$> fromString ptxt) True False htm
    where (ptxt, htm) = showAsPlaintextAndHtml pc i
   
   showListAsTable :: (TabShow (TSDLegend s), Monoid (SharedPrecomputation (TSDLegend s)))
             => Maybe (TSDLegend s) -> SharedPrecomputation s -> [s] -> TableView
   showListAsTable l pc i = addLegend l $ foldMap (rowEnv . showAsTable Nothing pc) i
-   where rowEnv (TableView tx tp md) = txtAlignDir $ TableView tx tp (htmAlign md)
+   where rowEnv (TableView tx tp rv md) = txtAlignDir $ TableView tx tp rv (htmAlign md)
            where (htmAlign, txtAlignDir) = case tableLevel . Just $ head i of
                   TabListItem -> (id,           horizontalCompos)
                   TabAtomic   -> (td,           horizontalCompos)
@@ -137,10 +137,10 @@ class (Monoid (SharedPrecomputation s)) => TabShow s where
                   TabListCols -> (tr,           verticalCompos  )
                   TabListRows -> (td . H.table, horizontalCompos)
          addLegend Nothing t = t
-         addLegend (Just l) (TableView tx tt md)
-               = TableView legendTx False (H.thead legendHtm)
-              <> TableView tx       False (H.tbody md)
-          where TableView legendTx False legendHtm
+         addLegend (Just l) (TableView tx tt rv md)
+               = TableView legendTx False rv' (H.thead legendHtm)
+              <> TableView tx       False rv  (H.tbody md)
+          where TableView legendTx False False legendHtm
                     = verticalCompos . rowEnv $ showAsTable Nothing mempty l
          [td,tr] = fmap (!asHTMLClass (tableCellClass . Just $ head i)) <$> [H.td, H.tr]
   
@@ -399,7 +399,7 @@ approxAndTooltip approx plaintext tooltip
 
 data TableView = TableView {
          plaintextTable :: Stretch TextBlock
-       , isTransposed :: Bool
+       , isTransposed, linesReversed :: Bool
        , htmlTable :: HTML
        }
 instance Semigroup TableView where
