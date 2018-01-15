@@ -8,15 +8,16 @@
 -- Portability : portable
 -- 
 
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE UnicodeSyntax        #-}
+{-# LANGUAGE TypeFamilies            #-}
+{-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE FlexibleContexts        #-}
+{-# LANGUAGE UndecidableInstances    #-}
+{-# LANGUAGE OverloadedStrings       #-}
+{-# LANGUAGE RankNTypes              #-}
+{-# LANGUAGE LambdaCase              #-}
+{-# LANGUAGE ScopedTypeVariables     #-}
+{-# LANGUAGE UnicodeSyntax           #-}
+{-# LANGUAGE ConstrainedClassMethods #-}
 
 module IHaskell.Tables.Data ( Table, tabular, tableWithLegend, TabShow
                             , approxAndTooltip ) where
