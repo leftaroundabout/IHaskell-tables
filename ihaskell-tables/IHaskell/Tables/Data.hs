@@ -305,9 +305,8 @@ lookupFSR (FloatShowReps negReps posReps) n
        negative nr = spcs ++ '-':num
         where (spcs,num) = span (==' ') nr
 
-instance ∀ f . (RealFloat f, Read f) => Monoid (FloatShowReps f) where
-  mempty = FloatShowReps mempty mempty
-  mappend (FloatShowReps f₁n f₁p) (FloatShowReps f₂n f₂p) = FloatShowReps
+instance ∀ f . (RealFloat f, Read f) => Semigroup (FloatShowReps f) where
+  FloatShowReps f₁n f₁p <> FloatShowReps f₂n f₂p = FloatShowReps
                (Map.fromList . ascIndent . rmAllFDups . Map.toList $ f₁n<>f₂n)
                (Map.fromList . ascIndent . rmAllFDups . Map.toList $ f₁p<>f₂p)
    where rmFalseDups _ [] = ([], False)
@@ -327,7 +326,9 @@ instance ∀ f . (RealFloat f, Read f) => Monoid (FloatShowReps f) where
          descInd (q₁@(_,(r₁:_)):qs) = q₁ : descInd (map (second $ map indMore) qs)
           where indMore r | r<r₁       = r
                           | otherwise  = indMore (' ':r)
- 
+instance ∀ f . (RealFloat f, Read f) => Monoid (FloatShowReps f) where
+  mempty = FloatShowReps mempty mempty
+  mappend = (<>)
 
 toHtmlWithEnSpaces :: String -> HTML
 toHtmlWithEnSpaces = foldMap ubs
